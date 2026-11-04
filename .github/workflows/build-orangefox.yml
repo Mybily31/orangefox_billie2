@@ -1,0 +1,137 @@
+name: Build OrangeFox Recovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/workflows/analyze-stock.yml"
+      - "tools/**"
+      - "stock/**"
+      - "out/**"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build OrangeFox R12.0 for billie2
+    runs-on: ubuntu-22.04
+    env:
+      MANIFEST_BRANCH: "12.1"
+      DEVICE_NAME: "billie2"
+      DEVICE_PATH: "device/oneplus/billie2"
+      BUILD_TARGET: "recovery"
+      USE_CCACHE: "true"
+    steps:
+      - name: Clean up disk space
+        uses: rokibhasansagar/slimhub_actions@main
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 zram-tools lz4 zstd
+          git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+          cd scripts
+          sudo bash setup/android_build_env.sh
+          cd ..
+          rm -rf scripts
+          sudo apt-get autoclean || true
+          sudo apt-get autoremove -qy || true
+          sudo rm -rf /var/cache/apt/archives/* || true
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: "3072"
+          temp-reserve-mb: "1024"
+          remove-android: "true"
+          remove-dotnet: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: device-tree
+
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: "2G"
+          create-symlink: true
+
+      - name: Enable ZRAM
+        run: |
+          sudo modprobe zram
+          sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap || true
+          sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap || true
+          sudo systemctl restart zramswap || true
+          zramctl || true
+
+      - name: Sync OrangeFox manifest
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/OrangeFox"
+          cd "${GITHUB_WORKSPACE}/OrangeFox"
+
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+
+          git clone https://gitlab.com/OrangeFox/sync.git -b master
+          cd sync
+          ./orangefox_sync.sh \
+            --branch "${MANIFEST_BRANCH}" \
+            --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
+
+      - name: Install device tree
+        run: |
+          DEST="${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}/${DEVICE_PATH}"
+          mkdir -p "$(dirname "$DEST")"
+          rsync -a --exclude=.git "${GITHUB_WORKSPACE}/device-tree/" "$DEST/"
+          echo "DEVICE_TREE_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          find "$DEST" -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Build OrangeFox
+        run: |
+          cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
+          export FOX_BUILD_DEVICE="${DEVICE_NAME}"
+          export ALLOW_MISSING_DEPENDENCIES=true
+          if [ "${USE_CCACHE}" = "true" ]; then
+            export USE_CCACHE=1
+            export CCACHE_EXEC="$(command -v ccache)"
+            echo "Using ccache: ${CCACHE_EXEC}"
+          fi
+          source build/envsetup.sh
+          lunch "twrp_${DEVICE_NAME}-eng"
+          mka adbd "${BUILD_TARGET}image"
+
+      - name: Collect outputs
+        run: |
+          OUT="${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}/out/target/product/${DEVICE_NAME}"
+          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
+          find "$OUT" -type f \( -name 'OrangeFox*.zip' -o -name 'OrangeFox*.img' \) -print -exec cp -v {} "${GITHUB_WORKSPACE}/artifacts/" \;
+          cp -v "$OUT/recovery.img" "${GITHUB_WORKSPACE}/artifacts/recovery-billie2.img"
+          ls -lh "${GITHUB_WORKSPACE}/artifacts"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangefox-billie2-${{ github.run_number }}
+          path: artifacts/*
+          retention-days: 30
+
+      - name: Publish release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: fox-r12.0-billie2-${{ github.run_number }}
+          name: OrangeFox R12.0 - OnePlus Nord N100 (${{ github.run_number }})
+          files: artifacts/*
+          body: |
+            OrangeFox Recovery R12.0 for the OnePlus Nord N100 (`billie2`).
+
+            - Branch: `fox_${{ env.MANIFEST_BRANCH }}`
+            - Device tree commit: `${{ github.sha }}`
+            - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
