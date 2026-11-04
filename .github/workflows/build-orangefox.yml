@@ -31,7 +31,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y aria2 zram-tools lz4 zstd
+          sudo apt-get install -y lz4 zstd
           git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
           cd scripts
           sudo bash setup/android_build_env.sh
@@ -61,14 +61,6 @@ jobs:
         with:
           max-size: "2G"
           create-symlink: true
-
-      - name: Enable ZRAM
-        run: |
-          sudo modprobe zram
-          sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap || true
-          sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap || true
-          sudo systemctl restart zramswap || true
-          zramctl || true
 
       - name: Sync OrangeFox manifest
         run: |
