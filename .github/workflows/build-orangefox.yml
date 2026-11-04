@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: orangefox-build
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build OrangeFox R12.0 for billie2
@@ -40,6 +44,11 @@ jobs:
           sudo apt-get autoclean || true
           sudo apt-get autoremove -qy || true
           sudo rm -rf /var/cache/apt/archives/* || true
+
+      - name: Disable systemd-oomd
+        run: |
+          sudo systemctl stop systemd-oomd systemd-oomd.socket 2>/dev/null || true
+          sudo systemctl disable systemd-oomd systemd-oomd.socket 2>/dev/null || true
 
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
