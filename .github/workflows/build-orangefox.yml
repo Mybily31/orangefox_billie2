@@ -46,6 +46,7 @@ jobs:
         with:
           root-reserve-mb: "3072"
           temp-reserve-mb: "1024"
+          swap-size-mb: "8192"
           remove-android: "true"
           remove-dotnet: "true"
           remove-haskell: "true"
@@ -97,8 +98,10 @@ jobs:
           set +e
           source build/envsetup.sh
           set -e
+          free -h
+          df -h .
           lunch "twrp_${DEVICE_NAME}-eng"
-          mka adbd "${BUILD_TARGET}image"
+          mka -j4 adbd "${BUILD_TARGET}image"
 
       - name: Collect outputs
         run: |
