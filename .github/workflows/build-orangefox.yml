@@ -94,7 +94,9 @@ jobs:
             export CCACHE_EXEC="$(command -v ccache)"
             echo "Using ccache: ${CCACHE_EXEC}"
           fi
+          set +e
           source build/envsetup.sh
+          set -e
           lunch "twrp_${DEVICE_NAME}-eng"
           mka adbd "${BUILD_TARGET}image"
 
