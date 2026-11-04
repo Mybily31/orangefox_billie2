@@ -1,0 +1,70 @@
+name: Analyze stock boot/recovery images
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/unpack_boot.py"
+      - ".github/workflows/analyze-stock.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Unpack and inspect stock 11.0.15 images
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lz4 zstd
+
+      - name: Download stock images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p stock
+          gh release download stock-11.0.15 --repo "$GITHUB_REPOSITORY" --dir stock
+          ls -l stock
+          sha256sum stock/*
+
+      - name: Unpack images
+        run: |
+          python3 tools/unpack_boot.py stock/recovery.img out/recovery --extract
+          python3 tools/unpack_boot.py stock/boot.img out/boot --extract
+
+      - name: Print report
+        run: |
+          set +e
+          R=out/recovery/ramdisk-root
+          echo "===== recovery ramdisk tree ====="
+          find "$R" -maxdepth 4 | sort | head -500
+          echo "===== fstab files ====="
+          find "$R" -iname '*fstab*' -type f | while read -r f; do echo "--- $f"; cat "$f"; done
+          echo "===== props ====="
+          for f in "$R"/prop.default "$R"/default.prop "$R"/system/build.prop; do
+            [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
+          done
+          echo "===== init.recovery.*.rc ====="
+          for f in "$R"/init.recovery.*.rc; do
+            [ -f "$f" ] && { echo "--- $f"; cat "$f"; }
+          done
+          echo "===== twrp.flags ====="
+          find "$R" -name 'twrp.flags' -type f -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+          echo "===== kernel strings ====="
+          strings out/recovery/kernel | grep -m3 'Linux version' || true
+          strings out/boot/kernel | grep -m3 'Linux version' || true
+          echo "===== recovery binaries ====="
+          ls -la "$R"/system/bin "$R"/system/lib64 2>/dev/null | head -150
+          echo "===== done ====="
+
+      - name: Upload analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-analysis
+          path: out
+          retention-days: 7
