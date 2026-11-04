@@ -56,8 +56,10 @@ jobs:
           echo "===== twrp.flags ====="
           find "$R" -name 'twrp.flags' -type f -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
           echo "===== kernel strings ====="
-          strings out/recovery/kernel | grep -m3 'Linux version' || true
-          strings out/boot/kernel | grep -m3 'Linux version' || true
+          for k in out/recovery/kernel out/boot/kernel; do
+            echo "--- $k"
+            (gzip -dc "$k" 2>/dev/null || cat "$k") | strings | grep -m3 'Linux version' || true
+          done
           echo "===== recovery binaries ====="
           ls -la "$R"/system/bin "$R"/system/lib64 2>/dev/null | head -150
           echo "===== done ====="

@@ -1,0 +1,14 @@
+# Device release name
+ro.display.series=Oneplus N100
+
+# USB and MTP stuff
+sys.usb.controller=4e00000.dwc3
+
+# Encryption
+vendor.gatekeeper.disable_spu=true
+fbe.metadata.wrappedkey=true
+
+# Crypto - Encryption
+ro.crypto.volume.filenames_mode=aes-256-cts
+ro.crypto.allow_encrypt_override=true
+fbe.data.wrappedkey=true

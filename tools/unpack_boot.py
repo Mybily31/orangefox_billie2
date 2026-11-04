@@ -173,6 +173,7 @@ def cpio_entries(data):
 
 
 def extract_cpio(data, dest):
+    dest = os.path.abspath(dest)
     count = 0
     for entry in cpio_entries(data):
         name = entry["name"]
@@ -180,7 +181,7 @@ def extract_cpio(data, dest):
             continue
         count += 1
         target = os.path.normpath(os.path.join(dest, name))
-        if not target.startswith(os.path.abspath(dest) + os.sep) and target != os.path.abspath(dest):
+        if target != dest and not target.startswith(dest + os.sep):
             print(f"skip suspicious path: {name}", file=sys.stderr)
             continue
         mode = entry["mode"]
