@@ -122,13 +122,35 @@ jobs:
             export CCACHE_EXEC="$(command -v ccache)"
             echo "Using ccache: ${CCACHE_EXEC}"
           fi
-          set +e
-          source build/envsetup.sh
-          set -e
           free -h
           df -h .
-          lunch "twrp_${DEVICE_NAME}-eng"
-          mka -j4 --skip-soong-tests adbd "${BUILD_TARGET}image"
+          (
+            while true; do
+              sleep 120
+              printf '[monitor %s] mem=%s swap=%s disk_avail=%s\n' \
+                "$(date -u +%H:%M:%S)" \
+                "$(free -m | awk '/Mem:/{print $3"/"$2"M"}')" \
+                "$(free -m | awk '/Swap:/{print $3"/"$2"M"}')" \
+                "$(df -h . | awk 'NR==2{print $4}')"
+            done
+          ) &
+          monitor_pid=$!
+          set +e
+          timeout -s TERM -k 60s 45m setsid bash -c '
+            trap "trap - TERM; kill 0" TERM
+            source build/envsetup.sh
+            set -e
+            lunch "twrp_${DEVICE_NAME}-eng"
+            mka -j4 --skip-soong-tests adbd "${BUILD_TARGET}image"
+          '
+          rc=$?
+          set -e
+          kill "$monitor_pid" 2>/dev/null || true
+          wait "$monitor_pid" 2>/dev/null || true
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
+            echo "::error::OrangeFox build stalled and was terminated by the 45-minute watchdog (runner host likely degraded)"
+          fi
+          exit "$rc"
 
       - name: Collect outputs
         run: |
