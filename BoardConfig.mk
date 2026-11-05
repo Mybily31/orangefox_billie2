@@ -113,6 +113,7 @@ TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.
 TW_Y_OFFSET := 60
 TW_H_OFFSET := -60
 TW_INPUT_BLACKLIST := "hbtp_vm"
+TW_CUSTOM_CPU_TEMP_PATH := "/sys/class/thermal/thermal_zone16/temp"
 
 TW_INCLUDE_RESETPROP := true
 TW_INCLUDE_LIBRESETPROP := true
