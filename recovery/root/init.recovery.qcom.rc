@@ -25,6 +25,11 @@
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
+on early-init
+    # keymaster_ver must exist before qseecomd registers its listeners so
+    # that the keymaster HAL starts without waiting for TWRP to set it
+    setprop keymaster_ver 4.0
+
 on init
     write /sys/class/backlight/panel0-backlight/brightness 200
 
@@ -32,6 +37,9 @@ on fs
     # Symlink bootdevice
     wait /dev/block/platform/${ro.boot.boot_devices}
     symlink /dev/block/platform/${ro.boot.boot_devices} /dev/block/bootdevice
+    # Start the TEE daemon before TWRP reaches Decrypt_Data(); prepdecrypt
+    # starts it too late for the metadata FBE decryption attempt
+    start qseecomd
 
 on post-fs
     start boot-hal-1-1
@@ -45,7 +53,10 @@ service vendor.qti.vibrator /system/bin/vendor.qti.hardware.vibrator.service
 
 on boot
     start vendor.qti.vibrator
-    setprop sys.usb.config adb,mtp
+    setprop sys.usb.config adb
+    # Give qseecomd and the keymaster HAL time to register before TWRP
+    # attempts metadata FBE decryption in Process_Fstab()
+    sleep 2
 
 on init
     setprop prepdecrypt.loglevel 2
