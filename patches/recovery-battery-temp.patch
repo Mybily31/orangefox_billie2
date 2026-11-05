@@ -1,0 +1,39 @@
+diff --git a/data.cpp b/data.cpp
+index 25b883e..c002100 100755
+--- a/data.cpp
++++ b/data.cpp
+@@ -1557,6 +1557,34 @@ int DataManager::GetMagicValue(const string& varName, string& value)
+ 		value = TWFunc::to_string(convert_temp);
+ 		return 0;
+ 	}
++	else if (varName == "tw_battery_temp")
++	{
++		string batt_temp_file;
++		static unsigned long batt_temp = 0;
++		static time_t battSecCheck = 0;
++		struct timeval curTime;
++		string results;
++
++		gettimeofday(&curTime, NULL);
++		if (curTime.tv_sec > battSecCheck)
++		{
++			batt_temp_file = "/sys/class/power_supply/battery/temp";
++			if (TWFunc::read_file(batt_temp_file, results) != 0)
++			{
++				batt_temp_file = "/sys/class/power_supply/bms/temp";
++				if (TWFunc::read_file(batt_temp_file, results) != 0)
++					return -1;
++			}
++			batt_temp = strtoul(results.c_str(), NULL, 0);
++			if (batt_temp >= 1000)
++				batt_temp /= 1000;
++			else if (batt_temp >= 150)
++				batt_temp /= 10;
++			battSecCheck = curTime.tv_sec + 5;
++		}
++		value = TWFunc::to_string(batt_temp);
++		return 0;
++	}
+ 	return -1;
+ }
+ 

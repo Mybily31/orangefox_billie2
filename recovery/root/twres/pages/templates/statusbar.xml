@@ -13,14 +13,14 @@
 				<condition var1="show_cpu_temp" var2="1"/>
 				<condition var1="center_clock" op="!=" var2="2"/>
 				<placement x="%status_indent_left%" y="%status_info_y%"/>
-				<text>{@cpu_temp}</text>
+				<text>{@cpu_temp} | %tw_battery_temp%&#xB0;C</text>
 			</text>
 			<text style="text_status">
 				<condition var1="show_cpu_temp" var2="1"/>
 				<condition var1="center_clock" var2="2"/>
 				<condition var1="tw_simulate_actions" op="!=" var2="1"/>
 				<placement x="%center_x%" y="%status_info_y%" placement="5"/>
-				<text>{@cpu_temp}</text>
+				<text>{@cpu_temp} | %tw_battery_temp%&#xB0;C</text>
 			</text>
 			<text style="text_status">
 				<condition var1="tw_simulate_actions" var2="1"/>

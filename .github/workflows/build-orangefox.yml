@@ -94,6 +94,11 @@ jobs:
           echo "DEVICE_TREE_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
           find "$DEST" -maxdepth 1 -type f -printf '%f\n' | sort
 
+      - name: Apply recovery patches
+        run: |
+          cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
+          git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-battery-temp.patch"
+
       - name: Build OrangeFox
         run: |
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
