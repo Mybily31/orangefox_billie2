@@ -61,6 +61,17 @@ jobs:
           remove-haskell: "true"
           remove-codeql: "true"
 
+      - name: Tune runner block devices
+        run: |
+          for dev in /sys/block/sd*/queue/read_ahead_kb /sys/block/nvme*/queue/read_ahead_kb /sys/block/vd*/queue/read_ahead_kb; do
+            [ -e "$dev" ] || continue
+            echo 128 | sudo tee "$dev" >/dev/null
+          done
+          uname -r
+          for dev in /sys/block/*/queue/read_ahead_kb; do
+            [ -e "$dev" ] && printf '%s: ' "$dev" && cat "$dev" || true
+          done
+
       - name: Checkout device tree
         uses: actions/checkout@v4
         with:
@@ -117,7 +128,7 @@ jobs:
           free -h
           df -h .
           lunch "twrp_${DEVICE_NAME}-eng"
-          mka -j4 adbd "${BUILD_TARGET}image"
+          mka -j4 --skip-soong-tests adbd "${BUILD_TARGET}image"
 
       - name: Collect outputs
         run: |
