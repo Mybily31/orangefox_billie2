@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build OrangeFox R12.0 for billie2
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-22.04
     env:
       MANIFEST_BRANCH: "12.1"
       DEVICE_NAME: "billie2"
