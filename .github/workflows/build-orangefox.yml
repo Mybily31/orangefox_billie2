@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build OrangeFox R12.0 for billie2
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-8vcpu-ubuntu-2204
     env:
       MANIFEST_BRANCH: "12.1"
       DEVICE_NAME: "billie2"
@@ -30,6 +30,7 @@ jobs:
       USE_CCACHE: "true"
     steps:
       - name: Clean up disk space
+        if: runner.environment == 'github-hosted'
         uses: rokibhasansagar/slimhub_actions@main
 
       - name: Install build dependencies
@@ -51,6 +52,7 @@ jobs:
           sudo systemctl disable systemd-oomd systemd-oomd.socket 2>/dev/null || true
 
       - name: Maximize build space
+        if: runner.environment == 'github-hosted'
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: "3072"
