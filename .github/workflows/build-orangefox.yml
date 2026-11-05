@@ -98,6 +98,7 @@ jobs:
         run: |
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
           git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-battery-temp.patch"
+          git -C system/security apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/keystore2-upgrade-params.patch"
 
       - name: Build OrangeFox
         run: |
