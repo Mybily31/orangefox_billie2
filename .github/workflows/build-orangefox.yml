@@ -126,6 +126,8 @@ jobs:
           fi
           free -h
           df -h .
+          LOG="${GITHUB_WORKSPACE}/build.log"
+          : > "$LOG"
           (
             while true; do
               sleep 120
@@ -133,24 +135,53 @@ jobs:
                 "$(date -u +%H:%M:%S)" \
                 "$(free -m | awk '/Mem:/{print $3"/"$2"M"}')" \
                 "$(free -m | awk '/Swap:/{print $3"/"$2"M"}')" \
-                "$(df -h . | awk 'NR==2{print $4}')"
+                "$(df -h . | awk 'NR==2{print $4}')" \
+                "$(stat -c %s "$LOG" 2>/dev/null || echo 0)"
             done
           ) &
           monitor_pid=$!
-          set +e
-          timeout -s TERM -k 60s 45m setsid bash -c '
+          setsid bash -c '
             trap "trap - TERM; kill 0" TERM
             source build/envsetup.sh
             set -e
             lunch "twrp_${DEVICE_NAME}-eng"
             mka -j4 --skip-soong-tests adbd "${BUILD_TARGET}image"
-          '
+          ' > "$LOG" 2>&1 &
+          build_pid=$!
+          tail -n +1 -f "$LOG" --pid="$build_pid" &
+          tail_pid=$!
+          last=0; idle=0; elapsed=0; killed=0
+          while kill -0 "$build_pid" 2>/dev/null; do
+            sleep 60
+            elapsed=$((elapsed + 60))
+            size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+            if [ "$size" -gt "$last" ]; then
+              last=$size; idle=0
+            else
+              idle=$((idle + 60))
+            fi
+            if [ "$idle" -ge 900 ]; then
+              echo "::error::No build output for 15 minutes — killing stalled build"
+              kill -TERM -"$build_pid" 2>/dev/null || true
+              killed=1
+              break
+            fi
+            if [ "$elapsed" -ge 5400 ]; then
+              echo "::error::Hard 90-minute build cap reached — killing build"
+              kill -TERM -"$build_pid" 2>/dev/null || true
+              killed=1
+              break
+            fi
+          done
+          set +e
+          wait "$build_pid"
           rc=$?
           set -e
-          kill "$monitor_pid" 2>/dev/null || true
-          wait "$monitor_pid" 2>/dev/null || true
+          [ "$killed" = "1" ] && rc=124
+          kill "$tail_pid" "$monitor_pid" 2>/dev/null || true
+          wait "$tail_pid" "$monitor_pid" 2>/dev/null || true
           if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
-            echo "::error::OrangeFox build stalled and was terminated by the 45-minute watchdog (runner host likely degraded)"
+            echo "::error::OrangeFox build was terminated by the watchdog (stalled >15m without output, or >90m total)"
           fi
           exit "$rc"
 
