@@ -202,7 +202,7 @@ jobs:
 
       - name: Publish release
         if: success()
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.2
         with:
           tag_name: fox-r12.0-billie2-${{ github.run_number }}
           name: OrangeFox R12.0 - OnePlus Nord N100 (${{ github.run_number }})
