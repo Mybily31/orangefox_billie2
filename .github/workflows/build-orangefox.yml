@@ -108,6 +108,7 @@ jobs:
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
           git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-battery-temp.patch"
           git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-wait-prepdecrypt.patch"
+          git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-link-keymaster-support.patch"
           git -C system/security apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/keystore2-upgrade-params.patch"
           git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-upgraded-blob-guard.patch"
           git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-direct-keymaster.patch"
