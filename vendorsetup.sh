@@ -27,12 +27,12 @@ if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
 	export ALLOW_MISSING_DEPENDENCIES=true
 
 	export FOX_BUILD_TYPE="Stable"
-	export FOX_VERSION="R11.1"
 	export FOX_VANILLA_BUILD=1
 	export OF_DISABLE_MIUI_SPECIFIC_FEATURES=1
 	export FOX_AB_DEVICE=1
 
 	export TARGET_DEVICE_ALT="OnePlusN100,BE2013"
+	export FOX_TARGET_DEVICES="billie2,$TARGET_DEVICE_ALT"
 
 	# Partition mapper
 	export FOX_RECOVERY_SYSTEM_PARTITION="/dev/block/mapper/system"

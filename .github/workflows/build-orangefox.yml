@@ -171,8 +171,8 @@ jobs:
               killed=1
               break
             fi
-            if [ "$elapsed" -ge 7200 ]; then
-              echo "::error::Hard 120-minute build cap reached — killing build"
+            if [ "$elapsed" -ge 5400 ]; then
+              echo "::error::Hard 90-minute build cap reached — killing build"
               kill -TERM -"$build_pid" 2>/dev/null || true
               killed=1
               break
@@ -186,7 +186,7 @@ jobs:
           kill "$tail_pid" "$monitor_pid" 2>/dev/null || true
           wait "$tail_pid" "$monitor_pid" 2>/dev/null || true
           if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
-            echo "::error::OrangeFox build was terminated by the watchdog (stalled >15m without output, or >120m total)"
+            echo "::error::OrangeFox build was terminated by the watchdog (stalled >15m without output, or >90m total)"
           fi
           exit "$rc"
 
