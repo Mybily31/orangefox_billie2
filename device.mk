@@ -51,12 +51,6 @@ PRODUCT_PACKAGES += \
     android.hardware.keymaster@4.1.recovery \
     android.hardware.gatekeeper@1.0.recovery
 
-# Dynamic partition tools
-PRODUCT_PACKAGES += \
-    lpflash \
-    lpmake \
-    lpunpack
-
 # Boot control HAL
 PRODUCT_PACKAGES += \
     android.hardware.boot@1.1-impl-qti.recovery
