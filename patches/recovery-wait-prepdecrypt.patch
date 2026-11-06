@@ -1,0 +1,18 @@
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index b52a7d4..29c0e43 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -674,6 +674,13 @@ void TWPartitionManager::Decrypt_Data() {
+ 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
+ 	if (Decrypt_Data && Decrypt_Data->Is_Encrypted && !Decrypt_Data->Is_Decrypted) {
+ 		Set_Crypto_State();
++		int crypto_wait_count = 0;
++		while (android::base::GetProperty("crypto.ready", "") != "1" && crypto_wait_count < 60) {
++			sleep(1);
++			crypto_wait_count++;
++		}
++		if (crypto_wait_count >= 60)
++			LOGERR("Timed out waiting for prepdecrypt to finish\n");
+ 		TWPartition* Key_Directory_Partition = Find_Partition_By_Path(Decrypt_Data->Key_Directory);
+ 		if (Key_Directory_Partition != nullptr)
+ 			if (!Key_Directory_Partition->Is_Mounted())

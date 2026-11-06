@@ -1,0 +1,598 @@
+diff --git a/Android.bp b/Android.bp
+index 376157b..99df9e7 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -132,6 +132,7 @@ cc_library_static {
+         "KeyStorage.cpp",
+         "KeyUtil.cpp",
+         "Keymaster.cpp",
++        "KeymasterHidl.cpp",
+         "Loop.cpp",
+         "MetadataCrypt.cpp",
+         "MoveStorage.cpp",
+diff --git a/Decrypt.cpp b/Decrypt.cpp
+index d9f034b..99125d0 100755
+--- a/Decrypt.cpp
++++ b/Decrypt.cpp
+@@ -37,6 +37,7 @@
+ #include <openssl/rand.h>
+ 
+ #include <dirent.h>
++#include <endian.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <sys/types.h>
+@@ -83,11 +84,14 @@ extern "C" {
+ #include "HashPassword.h"
+ #include "KeystoreInfo.hpp"
+ #include "KeyStorage.h"
++#include "KeymasterHidl.h"
+ #include "android/os/IVold.h"
+ 
+ namespace apc = ::aidl::android::security::apc;
+ namespace keymint = ::aidl::android::hardware::security::keymint;
+ namespace ks2 = ::aidl::android::system::keystore2;
++namespace hkm = ::android::vold::hidl_km::km;
++namespace hidl_km = ::android::vold::hidl_km;
+ 
+ using ::aidl::android::hardware::security::keymint::HardwareAuthenticatorType;
+ using ::aidl::android::hardware::security::keymint::HardwareAuthToken;
+@@ -436,11 +440,68 @@ namespace keystore {
+ 		dstof.close();
+ 	}
+ 
++	/* Locate the legacy keystore blob file holding the synthetic password key.
++	 * The file name is "<uid>_USRPKEY_synthetic_password_<subid>" (or USRSKEY),
++	 * where <subid> is the spblob handle with any leading zeros stripped. */
++	bool Find_Keystore_Blob_File(const userid_t user_id, const std::string& handle_str, std::string* blob_path) {
++		char dir_path[PATH_MAX];
++		snprintf(dir_path, sizeof(dir_path), "/data/misc/keystore/user_%d", user_id);
++		std::string handle_sub = handle_str;
++		while (handle_sub.size() > 1 && handle_sub[0] == '0') {
++			handle_sub.erase(0, 1);
++		}
++		DIR* dir = opendir(dir_path);
++		if (!dir) return false;
++		std::string pkey_match, skey_match, pkey_any, skey_any;
++		struct dirent* de;
++		while ((de = readdir(dir)) != nullptr) {
++			std::string name = de->d_name;
++			if (name.empty() || name[0] == '.') continue;
++			size_t pos = name.find(USR_PRIVATE_KEY_PREFIX);
++			bool is_pkey = pos != std::string::npos;
++			if (!is_pkey) {
++				pos = name.find(SYNTHETIC_PASSWORD_KEY_PREFIX);
++				if (pos == std::string::npos) continue;
++			}
++			std::string path = std::string(dir_path) + "/" + name;
++			size_t prefix_len = is_pkey ? strlen(USR_PRIVATE_KEY_PREFIX)
++				: strlen(SYNTHETIC_PASSWORD_KEY_PREFIX);
++			std::string suffix = name.substr(pos + prefix_len);
++			bool match = (suffix == handle_sub) || (suffix == handle_str) ||
++				(name.find(handle_sub) != std::string::npos);
++			if (is_pkey) {
++				if (match && pkey_match.empty()) pkey_match = path;
++				if (pkey_any.empty()) pkey_any = path;
++			} else {
++				if (match && skey_match.empty()) skey_match = path;
++				if (skey_any.empty()) skey_any = path;
++			}
++		}
++		closedir(dir);
++		if (!pkey_match.empty()) {
++			*blob_path = pkey_match;
++			return true;
++		}
++		if (!skey_match.empty()) {
++			*blob_path = skey_match;
++			return true;
++		}
++		if (!pkey_any.empty()) {
++			*blob_path = pkey_any;
++			return true;
++		}
++		if (!skey_any.empty()) {
++			*blob_path = skey_any;
++			return true;
++		}
++		return false;
++	}
++
+ 	/* C++ replacement for function of the same name
+ 	* https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#867
+ 	* returning an empty string indicates an error */
+ 	std::string unwrapSyntheticPasswordBlob(const std::string& spblob_path, const std::string& handle_str, const userid_t user_id,
+-		const void* application_id, const size_t application_id_size, uint32_t auth_token_len) {
++		const void* application_id, const size_t application_id_size, const void* auth_token, size_t auth_token_size) {
+ 		printf("Attempting to unwrap synthetic password blob\n");
+ 		std::string disk_decryption_secret_key = "";
+ 
+@@ -476,73 +537,92 @@ namespace keystore {
+ 			* First we set some algorithm parameters as seen in two places:
+ 			* https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/keystore/java/android/security/keystore/AndroidKeyStoreAuthenticatedAESCipherSpi.java#297
+ 			* https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/keystore/java/android/security/keystore/AndroidKeyStoreAuthenticatedAESCipherSpi.java#216 */
+-			// When using secdis (aka not weaver) you must supply an auth token to the keystore prior to the begin operation
+-			int32_t ret;
++			// When using secdis (aka not weaver) you must supply an auth token to the keymaster prior to the begin operation
+ 			size_t maclen = 128;
+-			unsigned char* iv = (unsigned char*)byteptr; // The IV is the first 12 bytes of the spblob
+-			::keystore::hidl_vec<uint8_t> iv_hidlvec;
+-			iv_hidlvec.setToExternal((unsigned char*)byteptr, 12);
+-			// printf("iv: "); output_hex((const unsigned char*)iv, 12); printf("\n");
+-
+-			KeystoreInfo keystore_info;
+-			std::string handle = keystore_info.getHandle(user_id);
+-			std::string keystore_alias = keystore_info.getAlias(handle);
+-			int32_t error_code;
+ 			unsigned char* cipher_text = (unsigned char*)byteptr + 12; // The cipher text comes immediately after the IV
+-			std::string cipher_text_str(byteptr, byteptr + spblob_data.size() - 14);
+-			::keystore::hidl_vec<uint8_t> cipher_text_hidlvec;
+-
+-			cipher_text_hidlvec.setToExternal(cipher_text, spblob_data.size() - 14 /* 1 each for version and SYNTHETIC_PASSWORD_PASSWORD_BASED and 12 for the iv */);
+-			auto begin_params = keymint::AuthorizationSetBuilder()
+-				.Authorization(keymint::TAG_ALGORITHM, ::keymint::Algorithm::AES)
+-				.Authorization(::keymint::TAG_BLOCK_MODE, ::keymint::BlockMode::GCM)
+-				.Padding(::keymint::PaddingMode::NONE)
+-				.Authorization(keymint::TAG_PURPOSE, keymint::KeyPurpose::DECRYPT)
+-				.Authorization(::keymint::TAG_NONCE, iv_hidlvec)
+-				.Authorization(::keymint::TAG_MAC_LENGTH, maclen);
+-
+-			ks2::KeyEntryResponse keyEntryResponse;
+-			::ndk::SpAIBinder keystoreBinder(AServiceManager_checkService("android.system.keystore2.IKeystoreService/default"));
+-			auto keystore = ks2::IKeystoreService::fromBinder(keystoreBinder);
+-			auto rc = keystore->getKeyEntry(keyDescriptor(keystore_alias), &keyEntryResponse);
+-			if (!rc.isOk()) {
+-				auto error = unwrapError(rc);
+-				if (ks2::ResponseCode(error) == ks2::ResponseCode::KEY_NOT_FOUND) {
+-					printf("key not found\n");
+-				} else {
+-					printf("Failed to get key entry: %s\n", rc.getDescription().c_str());
+-				}
++			std::string cipher_text_str((const char*)cipher_text, spblob_data.size() - 14 /* 1 each for version and SYNTHETIC_PASSWORD_PASSWORD_BASED and 12 for the iv */);
++
++			// Android 11 and older stored the synthetic password key in the legacy
++			// keystore database. Read that key blob directly and drive the keymaster
++			// HAL, exactly like the legacy keystore daemon did internally.
++			std::string keystore_blob_path;
++			if (!Find_Keystore_Blob_File(user_id, handle_str, &keystore_blob_path) &&
++					!Find_Keystore_Blob_File(0, handle_str, &keystore_blob_path)) {
++				printf("failed to find keystore blob file for '%s'\n", handle_str.c_str());
+ 				return disk_decryption_secret_key;
+ 			}
+-			std::variant<int, ks2::KeyEntryResponse> response = keyEntryResponse;
+-			auto keyResponse = std::get<ks2::KeyEntryResponse>(response);
+-			ks2::CreateOperationResponse encOperationResponse;
+-			auto begin_rc = keyResponse.iSecurityLevel->createOperation(
+-				keyResponse.metadata.key, begin_params.vector_data(), true,
+-				&encOperationResponse);
+-			if (!begin_rc.isOk()) {
+-				printf("Begin Operation failed\n");
++			printf("using keystore blob '%s'\n", keystore_blob_path.c_str());
++			std::string keystore_blob_data;
++			if (!android::base::ReadFileToString(keystore_blob_path, &keystore_blob_data)) {
++				printf("failed to read keystore blob file\n");
+ 				return disk_decryption_secret_key;
+ 			}
+-			std::optional<std::vector<uint8_t>> optPlaintext;
+-
+-			begin_rc = encOperationResponse.iOperation->finish(cipher_text_hidlvec, {}, &optPlaintext);
+-			if (!begin_rc.isOk()) {
+-				printf("finish reponse failed");
++			if (keystore_blob_data.size() < 40) {
++				printf("keystore blob file too short\n");
+ 				return disk_decryption_secret_key;
+ 			}
++			const uint8_t* raw_blob = (const uint8_t*)keystore_blob_data.data();
++			if (raw_blob[0] != 3) {
++				printf("unsupported keystore blob version %u\n", raw_blob[0]);
++				return disk_decryption_secret_key;
++			}
++			uint32_t key_blob_length = ((uint32_t)raw_blob[36] << 24) | ((uint32_t)raw_blob[37] << 16) |
++				((uint32_t)raw_blob[38] << 8) | (uint32_t)raw_blob[39];
++			if (key_blob_length == 0 || 40 + (size_t)key_blob_length > keystore_blob_data.size()) {
++				printf("invalid keymaster blob length %u\n", key_blob_length);
++				return disk_decryption_secret_key;
++			}
++			std::string keymaster_blob((const char*)raw_blob + 40, key_blob_length);
++
++			hkm::HardwareAuthToken authToken;
++			if (auth_token && auth_token_size >= sizeof(hw_auth_token_t)) {
++				const hw_auth_token_t* hw_token = (const hw_auth_token_t*)auth_token;
++				authToken.challenge = hw_token->challenge;
++				authToken.userId = hw_token->user_id;
++				authToken.authenticatorId = hw_token->authenticator_id;
++				authToken.authenticatorType = static_cast<hkm::HardwareAuthenticatorType>(
++					betoh32(hw_token->authenticator_type));
++				authToken.timestamp = betoh64(hw_token->timestamp);
++				authToken.mac.assign(hw_token->hmac, hw_token->hmac + sizeof(hw_token->hmac));
++			}
+ 
+-			size_t keystore_result_size = optPlaintext->size();
+-			unsigned char* keystore_result = (unsigned char*)malloc(keystore_result_size);
+-			if (!keystore_result) {
+-				printf("malloc on keystore_result\n");
++			hkm::AuthorizationSetBuilder begin_params;
++			begin_params.Authorization(hkm::TAG_ALGORITHM, hkm::Algorithm::AES)
++				.Authorization(hkm::TAG_BLOCK_MODE, hkm::BlockMode::GCM)
++				.Padding(hkm::PaddingMode::NONE)
++				.Authorization(hkm::TAG_NONCE, (const uint8_t*)byteptr, 12)
++				.Authorization(hkm::TAG_MAC_LENGTH, maclen);
++
++			hidl_km::HidlKeymaster keymaster;
++			if (!keymaster) {
++				printf("failed to get keymaster device\n");
++				return disk_decryption_secret_key;
++			}
++			auto op = keymaster.begin(hkm::KeyPurpose::DECRYPT, keymaster_blob, begin_params, authToken, nullptr);
++			if (!op) {
++				printf("keymaster begin failed: %d\n", int32_t(op.errorCode()));
+ 				return disk_decryption_secret_key;
+ 			}
+-			memcpy(keystore_result, &optPlaintext->front(), keystore_result_size);
++			std::string keystore_result;
++			if (!op.updateCompletely(cipher_text_str, &keystore_result)) {
++				printf("keymaster update failed\n");
++				return disk_decryption_secret_key;
++			}
++			std::string keystore_finish;
++			if (!op.finish(&keystore_finish)) {
++				printf("keymaster finish failed\n");
++				return disk_decryption_secret_key;
++			}
++			keystore_result += keystore_finish;
+ 
+-			const unsigned char* intermediate_iv = keystore_result;
++			size_t keystore_result_size = keystore_result.size();
++			if (keystore_result_size <= 12) {
++				printf("keymaster returned an invalid result\n");
++				return disk_decryption_secret_key;
++			}
++			const unsigned char* intermediate_iv = (const unsigned char*)keystore_result.data();
+ 			// printf("intermediate_iv: "); output_hex((const unsigned char*)intermediate_iv, 12); printf("\n");
+-			const unsigned char* intermediate_cipher_text = (const unsigned char*)keystore_result + 12; // The cipher text comes immediately after the IV
++			const unsigned char* intermediate_cipher_text = intermediate_iv + 12; // The cipher text comes immediately after the IV
+ 			int cipher_size = keystore_result_size - 12;
+ 			// First we personalize as seen https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordCrypto.java#102
+ 			void* personalized_application_id = PersonalizedHashBinary(PERSONALISATION_APPLICATION_ID, (const char*)application_id, application_id_size);
+@@ -569,7 +649,6 @@ namespace keystore {
+ 			EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
+ 			EVP_CIPHER_CTX_free(d_ctx);
+ 			free(personalized_application_id);
+-			free(keystore_result);
+ 			int secret_key_real_size = actual_size - 16;
+ 			// printf("secret key:  "); output_hex((const unsigned char*)secret_key, secret_key_real_size); printf("\n");
+ 			// The payload data from the keystore update is further personalized at https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
+@@ -649,7 +728,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 	pwd.password_handle = NULL;
+ 	pwd.handle_len = 0;
+ 	char application_id[PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH];
+-	uint32_t auth_token_len = 0;
++	std::vector<uint8_t> auth_token_data;
+ 	std::string secret; // this will be the disk decryption key that is sent to vold
+ 	int token = 0; // there is no token used for this kind of decrypt, key escrow is handled by weaver
+ 	char spblob_path_char[PATH_MAX];
+@@ -775,30 +854,13 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 				gk_device->verify(fakeUid(user_id), 0 /* challenge */,
+ 								  pwd_handle_hidl,
+ 								  gk_pwd_token_hidl,
+-								  [&gkResponse]
++								  [&gkResponse, &auth_token_data]
+ 									// []
+ 									(const android::hardware::gatekeeper::V1_0::GatekeeperResponse &rsp) {
+ 										// ret = static_cast<int>(rsp.code); // propagate errors
+ 										if (rsp.code >= android::hardware::gatekeeper::V1_0::GatekeeperStatusCode::STATUS_OK) {
+ 											gkResponse = GKResponse::ok({rsp.data.begin(), rsp.data.end()});
+-											const hw_auth_token_t* hwAuthToken =
+-												reinterpret_cast<const hw_auth_token_t*>(gkResponse.payload().data());
+-											HardwareAuthToken authToken;
+-											authToken.timestamp.milliSeconds = betoh64(hwAuthToken->timestamp);
+-											authToken.challenge = hwAuthToken->challenge;
+-											authToken.userId = hwAuthToken->user_id;
+-											authToken.authenticatorId = hwAuthToken->authenticator_id;
+-											authToken.authenticatorType = static_cast<HardwareAuthenticatorType>(
+-													betoh32(hwAuthToken->authenticator_type));
+-											authToken.mac.assign(&hwAuthToken->hmac[0], &hwAuthToken->hmac[32]);
+-											AIBinder* authzAIBinder = AServiceManager_getService("android.security.authorization");
+-											::ndk::SpAIBinder binder(authzAIBinder);
+-											auto service = aidl::android::security::authorization::IKeystoreAuthorization::fromBinder(binder);
+-											if (service == NULL) {
+-												printf("error: could not connect to keystore service\n");
+-												ALOGE("error: could not connect to keystore service\n");
+-											}
+-											auto binder_result = service->addAuthToken(authToken);
++											auth_token_data.assign(rsp.data.begin(), rsp.data.end());
+ 										}
+ 									}
+ 								 );
+@@ -813,7 +875,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 	// Plus we will include the last bit that computes the disk decrypt key found in:
+ 	// https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
+ 	secret = android::keystore::unwrapSyntheticPasswordBlob(spblob_path, handle_str, user_id, (const void*)&application_id[0], 
+-		PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH, auth_token_len);
++		PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH, auth_token_data.data(), auth_token_data.size());
+ 	if (!secret.size()) {
+ 		printf("failed to unwrapSyntheticPasswordBlob\n");
+ 		return Free_Return(retval, weaver_key, &pwd);
+diff --git a/KeymasterHidl.cpp b/KeymasterHidl.cpp
+new file mode 100644
+index 0000000..5527eee
+--- /dev/null
++++ b/KeymasterHidl.cpp
+@@ -0,0 +1,143 @@
++/*
++ * Copyright (C) 2016 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#include "KeymasterHidl.h"
++
++#include <android-base/logging.h>
++
++namespace android {
++namespace vold {
++namespace hidl_km {
++
++using ::android::hardware::hidl_vec;
++
++HidlKeymasterOperation::~HidlKeymasterOperation() {
++    if (mDevice) mDevice->abort(mOpHandle);
++}
++
++bool HidlKeymasterOperation::updateCompletely(
++        const char* input, size_t inputLen,
++        const std::function<void(const char*, size_t)> consumer) {
++    uint32_t inputConsumed = 0;
++
++    km::ErrorCode km_error;
++    auto hidlCB = [&](km::ErrorCode ret, uint32_t inputConsumedDelta,
++                      const hidl_vec<km::KeyParameter>& /*ignored*/,
++                      const hidl_vec<uint8_t>& _output) {
++        km_error = ret;
++        if (km_error != km::ErrorCode::OK) return;
++        inputConsumed += inputConsumedDelta;
++        if (_output.size()) {
++            consumer(reinterpret_cast<const char*>(_output.data()), _output.size());
++        }
++    };
++
++    while (inputConsumed != inputLen) {
++        size_t toRead = static_cast<size_t>(inputLen - inputConsumed);
++        auto inputBlob = km::support::blob2hidlVec(
++            reinterpret_cast<const uint8_t*>(&input[inputConsumed]), toRead);
++        auto error = mDevice->update(mOpHandle, hidl_vec<km::KeyParameter>(), inputBlob,
++                                     mAuthToken, km::VerificationToken(), hidlCB);
++        if (!error.isOk()) {
++            LOG(ERROR) << "update failed: " << error.description();
++            mDevice = nullptr;
++            return false;
++        }
++        if (km_error != km::ErrorCode::OK) {
++            LOG(ERROR) << "update failed, code " << int32_t(km_error);
++            mDevice = nullptr;
++            return false;
++        }
++        if (inputConsumed > inputLen) {
++            LOG(ERROR) << "update reported too much input consumed";
++            mDevice = nullptr;
++            return false;
++        }
++    }
++    return true;
++}
++
++bool HidlKeymasterOperation::finish(std::string* output) {
++    km::ErrorCode km_error;
++    auto hidlCb = [&](km::ErrorCode ret, const hidl_vec<km::KeyParameter>& /*ignored*/,
++                      const hidl_vec<uint8_t>& _output) {
++        km_error = ret;
++        if (km_error != km::ErrorCode::OK) return;
++        if (output && _output.size()) {
++            output->assign(reinterpret_cast<const char*>(_output.data()), _output.size());
++        }
++    };
++    auto error = mDevice->finish(mOpHandle, hidl_vec<km::KeyParameter>(), hidl_vec<uint8_t>(),
++                                 hidl_vec<uint8_t>(), mAuthToken, km::VerificationToken(), hidlCb);
++    mDevice = nullptr;
++    if (!error.isOk()) {
++        LOG(ERROR) << "finish failed: " << error.description();
++        return false;
++    }
++    if (km_error != km::ErrorCode::OK) {
++        LOG(ERROR) << "finish failed, code " << int32_t(km_error);
++        return false;
++    }
++    return true;
++}
++
++HidlKeymaster::HidlKeymaster() {
++    auto devices = KmDevice::enumerateAvailableDevices();
++    for (auto& dev : devices) {
++        // Do not use StrongBox for device encryption / credential encryption.
++        if (dev->halVersion().securityLevel != km::SecurityLevel::STRONGBOX) {
++            mDevice = std::move(dev);
++            break;
++        }
++    }
++    if (!mDevice) return;
++    auto& version = mDevice->halVersion();
++    LOG(INFO) << "Using " << version.keymasterName.c_str() << " from "
++              << version.authorName.c_str() << " for decryption. HAL: "
++              << mDevice->descriptor().c_str() << "/" << mDevice->instanceName().c_str();
++}
++
++HidlKeymasterOperation HidlKeymaster::begin(km::KeyPurpose purpose, const std::string& key,
++                                            const km::AuthorizationSet& inParams,
++                                            const km::HardwareAuthToken& authToken,
++                                            km::AuthorizationSet* outParams) {
++    auto keyBlob = km::support::blob2hidlVec(key);
++    uint64_t mOpHandle = 0;
++    km::ErrorCode km_error = km::ErrorCode::UNKNOWN_ERROR;
++
++    auto hidlCb = [&](km::ErrorCode ret, const hidl_vec<km::KeyParameter>& _outParams,
++                      uint64_t operationHandle) {
++        km_error = ret;
++        if (km_error != km::ErrorCode::OK) return;
++        if (outParams) *outParams = _outParams;
++        mOpHandle = operationHandle;
++    };
++
++    auto error = mDevice->begin(purpose, keyBlob, inParams.hidl_data(), authToken, hidlCb);
++    if (!error.isOk()) {
++        LOG(ERROR) << "begin failed: " << error.description();
++        return HidlKeymasterOperation(km::ErrorCode::UNKNOWN_ERROR);
++    }
++    if (km_error != km::ErrorCode::OK) {
++        LOG(ERROR) << "begin failed, code " << int32_t(km_error);
++        return HidlKeymasterOperation(km_error);
++    }
++    return HidlKeymasterOperation(mDevice.get(), mOpHandle, authToken);
++}
++
++}  // namespace hidl_km
++}  // namespace vold
++}  // namespace android
+diff --git a/KeymasterHidl.h b/KeymasterHidl.h
+new file mode 100644
+index 0000000..fb1d20c
+--- /dev/null
++++ b/KeymasterHidl.h
+@@ -0,0 +1,128 @@
++/*
++ * Copyright (C) 2016 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++#ifndef ANDROID_VOLD_KEYMASTER_HIDL_H
++#define ANDROID_VOLD_KEYMASTER_HIDL_H
++
++#include <algorithm>
++#include <functional>
++#include <iterator>
++#include <memory>
++#include <string>
++#include <utility>
++
++#include <android-base/macros.h>
++#include <keymasterV4_1/Keymaster.h>
++#include <keymasterV4_1/authorization_set.h>
++#include <keymasterV4_1/keymaster_utils.h>
++
++namespace android {
++namespace vold {
++namespace hidl_km {
++
++namespace km {
++using namespace ::android::hardware::keymaster::V4_1;
++using ErrorCode = ::android::hardware::keymaster::V4_0::ErrorCode;
++using V4_1_ErrorCode = ::android::hardware::keymaster::V4_1::ErrorCode;
++}  // namespace km
++
++using KmDevice = km::support::Keymaster;
++
++// Wrapper for a Keymaster operation handle representing an ongoing
++// Keymaster operation. Aborts the operation in the destructor if it is
++// unfinished. The hardware auth token used to start the operation is
++// forwarded to update and finish, which is required for auth-per-use keys.
++class HidlKeymasterOperation {
++  public:
++    ~HidlKeymasterOperation();
++    // Is this instance valid? This is false if creation fails, and becomes
++    // false on finish or if an update fails.
++    explicit operator bool() const { return mError == km::ErrorCode::OK; }
++    km::ErrorCode errorCode() const { return mError; }
++    // Call "update" repeatedly until all of the input is consumed, and
++    // concatenate the output. Return true on success.
++    template <class TI, class TO>
++    bool updateCompletely(TI& input, TO* output) {
++        if (output) output->clear();
++        return updateCompletely(input.data(), input.size(), [&](const char* b, size_t n) {
++            if (output) std::copy(b, b + n, std::back_inserter(*output));
++        });
++    }
++
++    // Finish and write the output to this string, unless pointer is null.
++    bool finish(std::string* output);
++    // Move constructor
++    HidlKeymasterOperation(HidlKeymasterOperation&& rhs) { *this = std::move(rhs); }
++    // Construct an object in an error state for error returns
++    HidlKeymasterOperation()
++        : mDevice{nullptr}, mOpHandle{0}, mAuthToken{}, mError{km::ErrorCode::UNKNOWN_ERROR} {}
++    // Move Assignment
++    HidlKeymasterOperation& operator=(HidlKeymasterOperation&& rhs) {
++        mDevice = rhs.mDevice;
++        rhs.mDevice = nullptr;
++
++        mOpHandle = rhs.mOpHandle;
++        rhs.mOpHandle = 0;
++
++        mAuthToken = std::move(rhs.mAuthToken);
++        rhs.mAuthToken = km::HardwareAuthToken();
++
++        mError = rhs.mError;
++        rhs.mError = km::ErrorCode::UNKNOWN_ERROR;
++
++        return *this;
++    }
++
++  private:
++    HidlKeymasterOperation(KmDevice* d, uint64_t h, const km::HardwareAuthToken& authToken)
++        : mDevice{d}, mOpHandle{h}, mAuthToken{authToken}, mError{km::ErrorCode::OK} {}
++    HidlKeymasterOperation(km::ErrorCode error)
++        : mDevice{nullptr}, mOpHandle{0}, mAuthToken{}, mError{error} {}
++
++    bool updateCompletely(const char* input, size_t inputLen,
++                          const std::function<void(const char*, size_t)> consumer);
++
++    KmDevice* mDevice;
++    uint64_t mOpHandle;
++    km::HardwareAuthToken mAuthToken;
++    km::ErrorCode mError;
++    DISALLOW_COPY_AND_ASSIGN(HidlKeymasterOperation);
++    friend class HidlKeymaster;
++};
++
++// Wrapper for a Keymaster HIDL device, used to decrypt blobs stored by the
++// legacy keystore daemon without going through keystore/keystore2.
++class HidlKeymaster {
++  public:
++    HidlKeymaster();
++    // false if we failed to open the keymaster device.
++    explicit operator bool() { return mDevice.get() != nullptr; }
++    // Begin a new cryptographic operation, collecting output parameters if pointer is non-null
++    HidlKeymasterOperation begin(km::KeyPurpose purpose, const std::string& key,
++                                 const km::AuthorizationSet& inParams,
++                                 const km::HardwareAuthToken& authToken,
++                                 km::AuthorizationSet* outParams);
++
++  private:
++    sp<KmDevice> mDevice;
++    DISALLOW_COPY_AND_ASSIGN(HidlKeymaster);
++};
++
++}  // namespace hidl_km
++}  // namespace vold
++}  // namespace android
++
++#endif  // ANDROID_VOLD_KEYMASTER_HIDL_H
