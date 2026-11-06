@@ -11,7 +11,7 @@ index 376157b..99df9e7 100644
          "MetadataCrypt.cpp",
          "MoveStorage.cpp",
 diff --git a/Decrypt.cpp b/Decrypt.cpp
-index d9f034b..3f8f4f9 100755
+index d9f034b..f147ff8 100755
 --- a/Decrypt.cpp
 +++ b/Decrypt.cpp
 @@ -37,6 +37,7 @@
@@ -107,7 +107,7 @@ index d9f034b..3f8f4f9 100755
  		printf("Attempting to unwrap synthetic password blob\n");
  		std::string disk_decryption_secret_key = "";
  
-@@ -476,73 +537,92 @@ namespace keystore {
+@@ -476,73 +537,93 @@ namespace keystore {
  			* First we set some algorithm parameters as seen in two places:
  			* https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/keystore/java/android/security/keystore/AndroidKeyStoreAuthenticatedAESCipherSpi.java#297
  			* https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/keystore/java/android/security/keystore/AndroidKeyStoreAuthenticatedAESCipherSpi.java#216 */
@@ -204,7 +204,8 @@ index d9f034b..3f8f4f9 100755
 +				authToken.authenticatorType = static_cast<hkm::HardwareAuthenticatorType>(
 +					betoh32(hw_token->authenticator_type));
 +				authToken.timestamp = betoh64(hw_token->timestamp);
-+				authToken.mac.assign(hw_token->hmac, hw_token->hmac + sizeof(hw_token->hmac));
++				authToken.mac = ::android::hardware::hidl_vec<uint8_t>(
++					hw_token->hmac, hw_token->hmac + sizeof(hw_token->hmac));
 +			}
  
 -			size_t keystore_result_size = optPlaintext->size();
@@ -215,7 +216,7 @@ index d9f034b..3f8f4f9 100755
 +			begin_params.Authorization(hkm::TAG_ALGORITHM, hkm::Algorithm::AES)
 +				.Authorization(hkm::TAG_BLOCK_MODE, hkm::BlockMode::GCM)
 +				.Padding(hkm::PaddingMode::NONE)
-+				.Authorization(hkm::TAG_NONCE, (const uint8_t*)byteptr, 12)
++				.Authorization(hkm::TAG_NONCE, (const uint8_t*)byteptr, (size_t)12)
 +				.Authorization(hkm::TAG_MAC_LENGTH, maclen);
 +
 +			hidl_km::HidlKeymaster keymaster;
@@ -254,7 +255,7 @@ index d9f034b..3f8f4f9 100755
  			int cipher_size = keystore_result_size - 12;
  			// First we personalize as seen https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordCrypto.java#102
  			void* personalized_application_id = PersonalizedHashBinary(PERSONALISATION_APPLICATION_ID, (const char*)application_id, application_id_size);
-@@ -569,7 +649,6 @@ namespace keystore {
+@@ -569,7 +650,6 @@ namespace keystore {
  			EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
  			EVP_CIPHER_CTX_free(d_ctx);
  			free(personalized_application_id);
@@ -262,7 +263,7 @@ index d9f034b..3f8f4f9 100755
  			int secret_key_real_size = actual_size - 16;
  			// printf("secret key:  "); output_hex((const unsigned char*)secret_key, secret_key_real_size); printf("\n");
  			// The payload data from the keystore update is further personalized at https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
-@@ -649,7 +728,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+@@ -649,7 +729,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
  	pwd.password_handle = NULL;
  	pwd.handle_len = 0;
  	char application_id[PASSWORD_TOKEN_SIZE + SHA512_DIGEST_LENGTH];
@@ -271,7 +272,7 @@ index d9f034b..3f8f4f9 100755
  	std::string secret; // this will be the disk decryption key that is sent to vold
  	int token = 0; // there is no token used for this kind of decrypt, key escrow is handled by weaver
  	char spblob_path_char[PATH_MAX];
-@@ -775,30 +854,13 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+@@ -775,30 +855,13 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
  				gk_device->verify(fakeUid(user_id), 0 /* challenge */,
  								  pwd_handle_hidl,
  								  gk_pwd_token_hidl,
@@ -304,7 +305,7 @@ index d9f034b..3f8f4f9 100755
  										}
  									}
  								 );
-@@ -813,7 +875,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+@@ -813,7 +876,7 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
  	// Plus we will include the last bit that computes the disk decrypt key found in:
  	// https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
  	secret = android::keystore::unwrapSyntheticPasswordBlob(spblob_path, handle_str, user_id, (const void*)&application_id[0], 
