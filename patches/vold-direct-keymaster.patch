@@ -11,7 +11,7 @@ index 376157b..99df9e7 100644
          "MetadataCrypt.cpp",
          "MoveStorage.cpp",
 diff --git a/Decrypt.cpp b/Decrypt.cpp
-index d9f034b..99125d0 100755
+index d9f034b..3f8f4f9 100755
 --- a/Decrypt.cpp
 +++ b/Decrypt.cpp
 @@ -37,6 +37,7 @@
@@ -184,7 +184,7 @@ index d9f034b..99125d0 100755
  			}
 +			const uint8_t* raw_blob = (const uint8_t*)keystore_blob_data.data();
 +			if (raw_blob[0] != 3) {
-+				printf("unsupported keystore blob version %u\n", raw_blob[0]);
++				printf("unsupported keystore blob version %u\n", (unsigned)raw_blob[0]);
 +				return disk_decryption_secret_key;
 +			}
 +			uint32_t key_blob_length = ((uint32_t)raw_blob[36] << 24) | ((uint32_t)raw_blob[37] << 16) |
