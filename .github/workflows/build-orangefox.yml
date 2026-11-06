@@ -20,10 +20,10 @@ concurrency:
 
 jobs:
   build:
-    name: Build OrangeFox R11.1 for billie2
+    name: Build OrangeFox R12.0 for billie2
     runs-on: ubuntu-22.04
     env:
-      MANIFEST_BRANCH: "11.0"
+      MANIFEST_BRANCH: "12.1"
       DEVICE_NAME: "billie2"
       DEVICE_PATH: "device/oneplus/billie2"
       BUILD_TARGET: "recovery"
@@ -95,7 +95,6 @@ jobs:
 
           git clone https://gitlab.com/OrangeFox/sync.git -b master
           cd sync
-          git checkout 53dfe4771b18313229b87253bde4a32bb72b2370
           ./orangefox_sync.sh \
             --branch "${MANIFEST_BRANCH}" \
             --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
@@ -111,13 +110,9 @@ jobs:
       - name: Apply recovery patches
         run: |
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
-          if [ "${MANIFEST_BRANCH}" = "12.1" ]; then
-            git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-battery-temp.patch"
-            git -C system/security apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/keystore2-upgrade-params.patch"
-            git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-upgraded-blob-guard.patch"
-          else
-            echo "fox_${MANIFEST_BRANCH} uses the AOSP keystore1 path; A12-only patches are skipped"
-          fi
+          git -C bootable/recovery apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/recovery-battery-temp.patch"
+          git -C system/security apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/keystore2-upgrade-params.patch"
+          git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-upgraded-blob-guard.patch"
 
       - name: Build OrangeFox
         run: |
@@ -150,7 +145,7 @@ jobs:
             source build/envsetup.sh
             set -e
             lunch "twrp_${DEVICE_NAME}-eng"
-            mka -j4 adbd "${BUILD_TARGET}image"
+            mka -j4 --skip-soong-tests adbd "${BUILD_TARGET}image"
           ' > "$LOG" 2>&1 &
           build_pid=$!
           tail -n +1 -f "$LOG" --pid="$build_pid" &
@@ -209,11 +204,11 @@ jobs:
         if: success()
         uses: softprops/action-gh-release@v3.0.2
         with:
-          tag_name: fox-r11.1-billie2-${{ github.run_number }}
-          name: OrangeFox R11.1 - OnePlus Nord N100 (${{ github.run_number }})
+          tag_name: fox-r12.0-billie2-${{ github.run_number }}
+          name: OrangeFox R12.0 - OnePlus Nord N100 (${{ github.run_number }})
           files: artifacts/*
           body: |
-            OrangeFox Recovery R11.1 for the OnePlus Nord N100 (`billie2`).
+            OrangeFox Recovery R12.0 for the OnePlus Nord N100 (`billie2`).
 
             - Branch: `fox_${{ env.MANIFEST_BRANCH }}`
             - Device tree commit: `${{ github.sha }}`

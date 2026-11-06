@@ -7,7 +7,7 @@
 OF_MAINTAINER := bily31
 
 # Display (720x1600, waterdrop notch)
-OF_SCREEN_H := 2400
+OF_SCREEN_H := 1600
 OF_STATUS_H := 72
 OF_HIDE_NOTCH := 1
 OF_STATUS_INDENT_LEFT := 30
