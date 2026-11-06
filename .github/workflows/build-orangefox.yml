@@ -27,7 +27,6 @@ jobs:
       DEVICE_NAME: "billie2"
       DEVICE_PATH: "device/oneplus/billie2"
       BUILD_TARGET: "recovery"
-      USE_CCACHE: "true"
     steps:
       - name: Clean up disk space
         if: runner.environment == 'github-hosted'
@@ -79,12 +78,6 @@ jobs:
         with:
           path: device-tree
 
-      - name: Configure ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          max-size: "2G"
-          create-symlink: true
-
       - name: Sync OrangeFox manifest
         run: |
           mkdir -p "${GITHUB_WORKSPACE}/OrangeFox"
@@ -95,6 +88,9 @@ jobs:
 
           git clone https://gitlab.com/OrangeFox/sync.git -b master
           cd sync
+          sed -i 's|git clone \$URL -b \$BRANCH recovery|git clone --depth=1 $URL -b $BRANCH recovery|g' orangefox_sync.sh
+          sed -i 's|git clone \$URL -b \$FOX_BRANCH "\$dest"|git clone --depth=1 $URL -b $FOX_BRANCH "$dest"|g' orangefox_sync.sh
+          grep -c "git clone --depth=1" orangefox_sync.sh
           ./orangefox_sync.sh \
             --branch "${MANIFEST_BRANCH}" \
             --path "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
@@ -121,18 +117,6 @@ jobs:
           cd "${GITHUB_WORKSPACE}/OrangeFox/fox_${MANIFEST_BRANCH}"
           export FOX_BUILD_DEVICE="${DEVICE_NAME}"
           export ALLOW_MISSING_DEPENDENCIES=true
-          if [ "${USE_CCACHE}" = "true" ]; then
-            export USE_CCACHE=1
-            export CCACHE_EXEC="$(command -v ccache)"
-            echo "Using ccache: ${CCACHE_EXEC}"
-            printf 'int main(void){return 0;}\n' > /tmp/ccache_probe.c
-            if ! "${CCACHE_EXEC}" /usr/bin/cc -c /tmp/ccache_probe.c -o /tmp/ccache_probe.o 2>/tmp/ccache_probe.err; then
-              echo "ccache is not usable, disabling it:"
-              cat /tmp/ccache_probe.err || true
-              unset USE_CCACHE
-              unset CCACHE_EXEC
-            fi
-          fi
           free -h
           df -h .
           LOG="${GITHUB_WORKSPACE}/build.log"
