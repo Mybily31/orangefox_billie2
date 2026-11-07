@@ -1,0 +1,19 @@
+diff --git a/FsCrypt.cpp b/FsCrypt.cpp
+index 7505e56..5e9078b 100644
+--- a/FsCrypt.cpp
++++ b/FsCrypt.cpp
+@@ -820,12 +820,8 @@ bool fscrypt_lock_user_key(userid_t user_id) {
+ 
+ static bool prepare_subdirs(const std::string& action, const std::string& volume_uuid,
+                             userid_t user_id, int flags) {
+-    if (0 != android::vold::ForkExecvp(
+-                 std::vector<std::string>{prepare_subdirs_path, action, volume_uuid,
+-                                          std::to_string(user_id), std::to_string(flags)})) {
+-        LOG(ERROR) << "vold_prepare_subdirs failed";
+-        return false;
+-    }
++    LOG(DEBUG) << "Skipping " << prepare_subdirs_path << " " << action << " for user "
++               << user_id << " with flags " << flags;
+     return true;
+ }
+ 

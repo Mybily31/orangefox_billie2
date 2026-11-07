@@ -112,6 +112,7 @@ jobs:
           git -C system/security apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/keystore2-upgrade-params.patch"
           git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-upgraded-blob-guard.patch"
           git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-direct-keymaster.patch"
+          git -C system/vold apply -p1 "${GITHUB_WORKSPACE}/device-tree/patches/vold-skip-prepare-subdirs.patch"
 
       - name: Build OrangeFox
         run: |
@@ -196,14 +197,34 @@ jobs:
 
       - name: Publish release
         if: success()
-        uses: softprops/action-gh-release@v3.0.2
-        with:
-          tag_name: fox-r12.0-billie2-${{ github.run_number }}
-          name: OrangeFox R12.0 - OnePlus Nord N100 (${{ github.run_number }})
-          files: artifacts/*
-          body: |
-            OrangeFox Recovery R12.0 for the OnePlus Nord N100 (`billie2`).
-
-            - Branch: `fox_${{ env.MANIFEST_BRANCH }}`
-            - Device tree commit: `${{ github.sha }}`
-            - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="fox-r12.0-billie2-${GITHUB_RUN_NUMBER}"
+          TITLE="OrangeFox R12.0 - OnePlus Nord N100 (${GITHUB_RUN_NUMBER})"
+          {
+            echo "OrangeFox Recovery R12.0 for the OnePlus Nord N100 (\`billie2\`)."
+            echo
+            echo "- Branch: \`fox_${MANIFEST_BRANCH}\`"
+            echo "- Device tree commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } > "${GITHUB_WORKSPACE}/release-body.md"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --notes-file "${GITHUB_WORKSPACE}/release-body.md" --draft
+          fi
+          uploaded=0
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"; then
+              uploaded=1
+              break
+            fi
+            echo "::warning::asset upload attempt ${attempt} failed; retrying in 20s"
+            sleep 20
+          done
+          if [ "$uploaded" -ne 1 ]; then
+            echo "::error::release asset upload failed after 5 attempts; release ${TAG} left as draft"
+            exit 1
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
